@@ -1,3 +1,4 @@
+import itertools
 import os
 import yaml
 from pocketflow import Node, BatchNode
@@ -82,11 +83,11 @@ class IdentifyAbstractions(Node):
 
         # Helper to create context from files, respecting limits (basic example)
         def create_llm_context(files_data):
-            context = ""
+            context = []
             file_info = [] # Store tuples of (index, path)
             for i, (path, content) in enumerate(files_data):
-                entry = f"--- File Index {i}: {path} ---\n{content}\n\n"
-                context += entry
+                entry = f"""\n<file index={i} path="{path}">\n{content}\n\n</file>\n"""
+                context.append(entry)
                 file_info.append((i, path))
 
             return context, file_info # file_info is list of (index, path)
@@ -110,18 +111,51 @@ class IdentifyAbstractions(Node):
             name_lang_hint = f" (value in {language.capitalize()})"
             desc_lang_hint = f" (value in {language.capitalize()})"
 
-        prompt = f"""
-For the project `{project_name}`:
+        prompt_load = f"""
+For the project `{project_name}` source code will need to be analised. At this stage we are loading
+all the source code for context.
 
-Codebase Context:
+List of file indices and paths to be loaded:
+{file_listing_for_prompt}
+
+Files will come in batches in next requests in format:
+<batch>
+
+<file index=... path=...>
+...
+</file>
+
+<file index=... path=...>
+...
+</file>
+
+...
+</batch>
+
+Do not do anything until all files have been loaded.
+"""
+        response = call_llm(prompt_load)
+        print(response)
+
+        for file_content in itertools.batched(context, 50):
+            context = "\n".join(file_content)
+            prompt_files = f"""
+<batch>
 {context}
+</batch>
+"""
+            response = call_llm(prompt_files)
+            print(response)
+
+        prompt = f"""
+All source files have been loaded now.
 
 {language_instruction}Analyze the codebase context.
 Identify the top 5-10 core most important abstractions to help those new to the codebase.
 
 For each abstraction, provide:
 1. A concise `name`{name_lang_hint}.
-2. A beginner-friendly `description` explaining what it is with a simple analogy, in around 100 words{desc_lang_hint}.
+2. A `description` explaining what does and why, in around 100 words{desc_lang_hint}.
 3. A list of relevant `file_indices` (integers) using the format `idx # path/comment`.
 
 List of file indices and paths present in the context:
@@ -147,6 +181,7 @@ Format the output as a YAML list of dictionaries:
 # ... up to 10 abstractions
 ```"""
         response = call_llm(prompt)
+        print(response)
 
         # --- Validation ---
         yaml_str = response.strip().split("```yaml")[1].split("```")[0].strip()
@@ -255,7 +290,7 @@ Context (Abstractions, Descriptions, Code):
 {context}
 
 {language_instruction}Please provide:
-1. A high-level `summary` of the project's main purpose and functionality in a few beginner-friendly sentences{lang_hint}. Use markdown formatting with **bold** and *italic* text to highlight important concepts.
+1. A high-level `summary` of the project's main purpose and functionality in a few sentences{lang_hint}. Use markdown formatting with **bold** and *italic* text to highlight important concepts.
 2. A list (`relationships`) describing the key interactions between these abstractions. For each relationship, specify:
     - `from_abstraction`: Index of the source abstraction (e.g., `0 # AbstractionName1`)
     - `to_abstraction`: Index of the target abstraction (e.g., `1 # AbstractionName2`)
@@ -281,7 +316,7 @@ relationships:
   # ... other relationships
 ```
 
-Now, provide the YAML output:
+Now, provide the YAML output.
 """
         response = call_llm(prompt)
 
@@ -379,7 +414,7 @@ Abstractions (Index # Name){list_lang_note}:
 Context about relationships and project summary:
 {context}
 
-If you are going to make a tutorial for ```` {project_name} ````, what is the best order to explain these abstractions, from first to last?
+If you are going to make a walkthrough for ```` {project_name} ```` codebase, what is the best order to explain these abstractions, from first to last?
 Ideally, first explain those that are the most important or foundational, perhaps user-facing concepts or entry points. Then move to more detailed, lower-level implementation details or supporting concepts.
 
 Output the ordered list of abstraction indices, including the name in a comment for clarity. Use the format `idx # AbstractionName`.
@@ -391,7 +426,7 @@ Output the ordered list of abstraction indices, including the name in a comment 
 - ...
 ```
 
-Now, provide the YAML output:
+Now, provide the YAML output.
 """
         response = call_llm(prompt)
 
@@ -535,7 +570,7 @@ class WriteChapters(BatchNode):
         tone_note = ""
         if language.lower() != "english":
             lang_cap = language.capitalize()
-            language_instruction = f"IMPORTANT: Write this ENTIRE tutorial chapter in **{lang_cap}**. Some input context (like concept name, description, chapter list, previous summary) might already be in {lang_cap}, but you MUST translate ALL other generated content including explanations, examples, technical terms, and potentially code comments into {lang_cap}. DO NOT use English anywhere except in code syntax, required proper nouns, or when specified. The entire output MUST be in {lang_cap}.\n\n"
+            language_instruction = f"IMPORTANT: Write this ENTIRE documentation chapter in **{lang_cap}**. Some input context (like concept name, description, chapter list, previous summary) might already be in {lang_cap}, but you MUST translate ALL other generated content including explanations, examples, technical terms, and potentially code comments into {lang_cap}. DO NOT use English anywhere except in code syntax, required proper nouns, or when specified. The entire output MUST be in {lang_cap}.\n\n"
             concept_details_note = f" (Note: Provided in {lang_cap})"
             structure_note = f" (Note: Chapter names might be in {lang_cap})"
             prev_summary_note = f" (Note: This summary might be in {lang_cap})"
@@ -547,14 +582,14 @@ class WriteChapters(BatchNode):
 
 
         prompt = f"""
-{language_instruction}Write a very beginner-friendly tutorial chapter (in Markdown format) for the project `{project_name}` about the concept: "{abstraction_name}". This is Chapter {chapter_num}.
+{language_instruction}Write a documentation chapter (in Markdown format) for the project `{project_name}` about the concept: "{abstraction_name}". This is Chapter {chapter_num}.
 
 Concept Details{concept_details_note}:
 - Name: {abstraction_name}
 - Description:
 {abstraction_description}
 
-Complete Tutorial Structure{structure_note}:
+Complete Documentation Structure{structure_note}:
 {item["full_chapter_listing"]}
 
 Context from previous chapters{prev_summary_note}:
@@ -568,31 +603,27 @@ Instructions for the chapter (Generate content in {language.capitalize()} unless
 
 - If this is not the first chapter, begin with a brief transition from the previous chapter{instruction_lang_note}, referencing it with a proper Markdown link using its name{link_lang_note}.
 
-- Begin with a high-level motivation explaining what problem this abstraction solves{instruction_lang_note}. Start with a central use case as a concrete example. The whole chapter should guide the reader to understand how to solve this use case. Make it very minimal and friendly to beginners.
+- Begin with a high-level motivation explaining what problem this abstraction solves{instruction_lang_note}. Start with a central use case as a concrete example. The whole chapter should guide the reader to understand how to solve this use case. Make it very consise but target audience is itermediate software developer.
 
-- If the abstraction is complex, break it down into key concepts. Explain each concept one-by-one in a very beginner-friendly way{instruction_lang_note}.
+- Explain how this abstraction is used in code to solve core use case{instruction_lang_note}. Give example inputs and outputs for code snippets (if the output isn't values, describe at a high level what will happen{instruction_lang_note}).
 
-- Explain how to use this abstraction to solve the use case{instruction_lang_note}. Give example inputs and outputs for code snippets (if the output isn't values, describe at a high level what will happen{instruction_lang_note}).
-
-- Each code block should be BELOW 20 lines! If longer code blocks are needed, break them down into smaller pieces and walk through them one-by-one. Aggresively simplify the code to make it minimal. Use comments{code_comment_note} to skip non-important implementation details. Each code block should have a beginner friendly explanation right after it{instruction_lang_note}.
+- Each code block should be BELOW 20 lines! If longer code blocks are needed, break them down into smaller pieces and walk through them one-by-one. Aggresively simplify the code to make it minimal. Use comments{code_comment_note} to skip non-important implementation details. Each code block should have an brief (the audience is intermediate level deveoper) explanation right after it{instruction_lang_note}.
 
 - Describe the internal implementation to help understand what's under the hood{instruction_lang_note}. First provide a non-code or code-light walkthrough on what happens step-by-step when the abstraction is called{instruction_lang_note}. It's recommended to use a simple sequenceDiagram with a dummy example - keep it minimal with at most 5 participants to ensure clarity. If participant name has space, use: `participant QP as Query Processing`. {mermaid_lang_note}.
 
-- Then dive deeper into code for the internal implementation with references to files. Provide example code blocks, but make them similarly simple and beginner-friendly. Explain{instruction_lang_note}.
+- Then dive deeper into code for the internal implementation with references to files. Provide example code blocks, but make them consise and aimed ad intermediate developer. Explain{instruction_lang_note}.
 
-- IMPORTANT: When you need to refer to other core abstractions covered in other chapters, ALWAYS use proper Markdown links like this: [Chapter Title](filename.md). Use the Complete Tutorial Structure above to find the correct filename and the chapter title{link_lang_note}. Translate the surrounding text.
+- IMPORTANT: When you need to refer to other core abstractions covered in other chapters, ALWAYS use proper Markdown links like this: [Chapter Title](filename.md). Use the Complete Documentation Structure above to find the correct filename and the chapter title{link_lang_note}. Translate the surrounding text.
 
 - Use mermaid diagrams to illustrate complex concepts (```mermaid``` format). {mermaid_lang_note}.
 
-- Heavily use analogies and examples throughout{instruction_lang_note} to help beginners understand.
-
 - End the chapter with a brief conclusion that summarizes what was learned{instruction_lang_note} and provides a transition to the next chapter{instruction_lang_note}. If there is a next chapter, use a proper Markdown link: [Next Chapter Title](next_chapter_filename){link_lang_note}.
 
-- Ensure the tone is welcoming and easy for a newcomer to understand{tone_note}.
+- Ensure the tone is welcoming, like a mentor explaining it to a smart student{tone_note}.
 
 - Output *only* the Markdown content for this chapter.
 
-Now, directly provide a super beginner-friendly Markdown output (DON'T need ```markdown``` tags):
+The target audience is a developer who will be tasked with maintaining the codebase. Now directly provide this Markdown output (DON'T need ```markdown``` tags).
 """
         chapter_content = call_llm(prompt)
         # Basic validation/cleanup
@@ -656,7 +687,7 @@ class CombineTutorial(Node):
         # --- End Mermaid ---
 
         # --- Prepare index.md content ---
-        index_content = f"# Tutorial: {project_name}\n\n"
+        index_content = f"# Documentation: {project_name}\n\n"
         index_content += f"{relationships_data['summary']}\n\n" # Use the potentially translated summary directly
         # Keep fixed strings in English
         index_content += f"**Source Repository:** [{repo_url}]({repo_url})\n\n"
@@ -685,7 +716,7 @@ class CombineTutorial(Node):
                 if not chapter_content.endswith("\n\n"):
                     chapter_content += "\n\n"
                 # Keep fixed strings in English
-                chapter_content += f"---\n\nGenerated by [AI Codebase Knowledge Builder](https://github.com/The-Pocket/Tutorial-Codebase-Knowledge)"
+                #chapter_content += f"---\n\nGenerated by [AI Codebase Knowledge Builder](https://github.com/The-Pocket/Tutorial-Codebase-Knowledge)"
 
                 # Store filename and corresponding content
                 chapter_files.append({"filename": filename, "content": chapter_content})
@@ -693,7 +724,7 @@ class CombineTutorial(Node):
                  print(f"Warning: Mismatch between chapter order, abstractions, or content at index {i} (abstraction index {abstraction_index}). Skipping file generation for this entry.")
 
         # Add attribution to index content (using English fixed string)
-        index_content += f"\n\n---\n\nGenerated by [AI Codebase Knowledge Builder](https://github.com/The-Pocket/Tutorial-Codebase-Knowledge)"
+        #index_content += f"\n\n---\n\nGenerated by [AI Codebase Knowledge Builder](https://github.com/The-Pocket/Tutorial-Codebase-Knowledge)"
 
         return {
             "output_path": output_path,
@@ -706,7 +737,7 @@ class CombineTutorial(Node):
         index_content = prep_res["index_content"]
         chapter_files = prep_res["chapter_files"]
 
-        print(f"Combining tutorial into directory: {output_path}")
+        print(f"Combining documentation into directory: {output_path}")
         # Rely on Node's built-in retry/fallback
         os.makedirs(output_path, exist_ok=True)
 
@@ -728,4 +759,4 @@ class CombineTutorial(Node):
 
     def post(self, shared, prep_res, exec_res):
         shared["final_output_dir"] = exec_res # Store the output path
-        print(f"\nTutorial generation complete! Files are in: {exec_res}")
+        print(f"\nDocumentation generation complete! Files are in: {exec_res}")

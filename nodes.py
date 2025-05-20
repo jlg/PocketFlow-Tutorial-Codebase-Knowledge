@@ -79,6 +79,7 @@ class IdentifyAbstractions(Node):
     def prep(self, shared):
         files_data = shared["files"]
         project_name = shared["project_name"]  # Get project name
+        batch_size = shared["batch_size"]
         language = shared.get("language", "english") # Get language
 
         # Helper to create context from files, respecting limits (basic example)
@@ -95,10 +96,10 @@ class IdentifyAbstractions(Node):
         context, file_info = create_llm_context(files_data)
         # Format file info for the prompt (comment is just a hint for LLM)
         file_listing_for_prompt = "\n".join([f"- {idx} # {path}" for idx, path in file_info])
-        return context, file_listing_for_prompt, len(files_data), project_name, language # Return language
+        return context, file_listing_for_prompt, len(files_data), batch_size, project_name, language # Return language
 
     def exec(self, prep_res):
-        context, file_listing_for_prompt, file_count, project_name, language = prep_res  # Unpack project name and language
+        context, file_listing_for_prompt, file_count, batch_size, project_name, language = prep_res  # Unpack project name and language
         print(f"Identifying abstractions using LLM...")
 
         # Add language instruction and hints only if not English
@@ -137,7 +138,7 @@ Do not do anything until all files have been loaded.
         response = call_llm(prompt_load)
         print(response)
 
-        for file_content in itertools.batched(context, 50):
+        for file_content in itertools.batched(context, batch_size):
             context = "\n".join(file_content)
             prompt_files = f"""
 <batch>
@@ -707,7 +708,7 @@ class CombineTutorial(Node):
             if 0 <= abstraction_index < len(abstractions) and i < len(chapters_content):
                 abstraction_name = abstractions[abstraction_index]["name"] # Potentially translated name
                 # Sanitize potentially translated name for filename
-                safe_name = "".join(c if c.isalnum() else '_' for c in abstraction_name).lower()
+                safe_name = "".join(c if c.isalnum() else '_' for c in abstraction_name).lower().strip("_")
                 filename = f"{i+1:02d}_{safe_name}.md"
                 index_content += f"{i+1}. [{abstraction_name}]({filename})\n" # Use potentially translated name in link text
 

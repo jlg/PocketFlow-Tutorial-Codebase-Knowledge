@@ -34,6 +34,7 @@ def main():
     parser.add_argument("-i", "--include", nargs="+", help="Include file patterns (e.g. '*.py' '*.js'). Defaults to common code files if not specified.")
     parser.add_argument("-e", "--exclude", nargs="+", help="Exclude file patterns (e.g. 'tests/*' 'docs/*'). Defaults to test/build directories if not specified.")
     parser.add_argument("-s", "--max-size", type=int, default=100000, help="Maximum file size in bytes (default: 100000, about 100KB).")
+    parser.add_argument("-b", "--batch", type=int, default=30, help="Batch size for context loading.")
     # Add language parameter for multi-language support
     parser.add_argument("--language", default="english", help="Language for the generated tutorial (default: english)")
 
@@ -58,6 +59,7 @@ def main():
         "include_patterns": set(args.include) if args.include else DEFAULT_INCLUDE_PATTERNS,
         "exclude_patterns": set(args.exclude) if args.exclude else DEFAULT_EXCLUDE_PATTERNS,
         "max_file_size": args.max_size,
+        "batch_size": args.batch,
 
         # Add language for multi-language support
         "language": args.language,
